@@ -18,6 +18,7 @@
 /ffprobe*
 /unicode*
 /libnusqlite3*
+/mydocs/
 
 sw.*
 .DS_STORE
