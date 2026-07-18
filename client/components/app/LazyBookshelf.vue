@@ -176,12 +176,14 @@ export default {
     },
     filterName() {
       if (!this.filterBy) return ''
+      if (this.filterBy.includes(',')) return 'Filters'
       var filter = this.filterBy.split('.')[0]
       filter = filter.substr(0, 1).toUpperCase() + filter.substr(1)
       return filter
     },
     filterValue() {
       if (!this.filterBy) return ''
+      if (this.filterBy.includes(',')) return `${this.filterBy.split(',').length} selected`
       if (!this.filterBy.includes('.')) return ''
       return this.$decode(this.filterBy.split('.')[1])
     },

@@ -6,7 +6,7 @@
           <span class="block truncate text-xs" :class="!selectedText ? 'text-gray-300' : ''">{{ selectedText }}</span>
         </span>
       </button>
-      <span v-if="selected === 'all'" class="ml-3 absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+      <span v-if="!selectedTokens.length" class="ml-3 absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
         <svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
           <path fill-rule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
         </svg>
@@ -19,7 +19,7 @@
     <div v-show="showMenu" class="absolute z-10 mt-1 w-full bg-bg border border-black-200 shadow-lg rounded-md py-1 ring-1 ring-black/5 overflow-auto focus:outline-hidden text-sm libraryFilterMenu">
       <ul v-show="!sublist" class="h-full w-full" role="menu">
         <template v-for="item in selectItems">
-          <li :key="item.value" class="select-none relative py-2 pr-9 cursor-pointer hover:bg-white/5" :class="item.value === selected ? 'bg-white/5 text-yellow-400' : 'text-gray-200 hover:text-white'" role="menuitem" :aria-haspopup="item.sublist ? '' : 'menu'" @click="clickedOption(item)">
+          <li :key="item.value" class="select-none relative py-2 pr-9 cursor-pointer hover:bg-white/5" :class="isSelected(item.value) ? 'bg-white/5 text-yellow-400' : 'text-gray-200 hover:text-white'" role="menuitem" :aria-haspopup="item.sublist ? '' : 'menu'" @click="clickedOption(item)">
             <div class="flex items-center justify-between">
               <span class="font-normal ml-3 block truncate text-sm">{{ item.text }}</span>
             </div>
@@ -27,7 +27,7 @@
               <span class="material-symbols text-2xl" :aria-label="$strings.LabelMore">arrow_right</span>
             </div>
             <!-- selected checkmark icon -->
-            <div v-if="item.value === selected" class="absolute inset-y-0 right-2 h-full flex items-center pointer-events-none">
+            <div v-if="isSelected(item.value)" class="absolute inset-y-0 right-2 h-full flex items-center pointer-events-none">
               <span class="material-symbols text-base text-yellow-400">check</span>
             </div>
           </li>
@@ -48,13 +48,17 @@
           </div>
         </li>
         <template v-for="item in sublistItems">
-          <li :key="item.value" class="select-none relative px-2 cursor-pointer hover:bg-white/5" :class="`${sublist}.${item.value}` === selected ? 'bg-white/5 text-yellow-400' : 'text-gray-200 hover:text-white'" role="menuitem" @click="clickedSublistOption(item.value)">
-            <div class="flex items-center">
-              <span class="font-normal truncate py-2 text-xs">{{ item.text }}</span>
+          <li :key="item.value" class="select-none relative px-2 hover:bg-white/5" :class="getFilterMode(`${sublist}.${item.value}`) ? 'bg-white/5' : ''" role="menuitem">
+            <div class="flex items-center pr-16">
+              <span class="font-normal truncate py-2 text-xs" :class="getFilterMode(`${sublist}.${item.value}`) === 'exclude' ? 'text-red-400' : getFilterMode(`${sublist}.${item.value}`) === 'include' ? 'text-yellow-400' : 'text-gray-200'">{{ item.text }}</span>
             </div>
-            <!-- selected checkmark icon -->
-            <div v-if="`${sublist}.${item.value}` === selected" class="absolute inset-y-0 right-2 h-full flex items-center pointer-events-none">
-              <span class="material-symbols text-base text-yellow-400">check</span>
+            <div class="absolute inset-y-0 right-2 h-full flex items-center gap-1">
+              <button type="button" class="h-7 w-7 rounded hover:bg-white/10" :class="getFilterMode(`${sublist}.${item.value}`) === 'include' ? 'text-yellow-400 bg-white/10' : 'text-gray-400'" :aria-label="`Include ${item.text}`" :title="`Include ${item.text}`" @click.stop="setSublistFilter(item.value, 'include')">
+                <span class="material-symbols text-base">check</span>
+              </button>
+              <button v-if="isComposableSublist" type="button" class="h-7 w-7 rounded hover:bg-white/10" :class="getFilterMode(`${sublist}.${item.value}`) === 'exclude' ? 'text-red-400 bg-white/10' : 'text-gray-400'" :aria-label="`Exclude ${item.text}`" :title="`Exclude ${item.text}`" @click.stop="setSublistFilter(item.value, 'exclude')">
+                <span class="material-symbols text-base">block</span>
+              </button>
             </div>
           </li>
         </template>
@@ -311,8 +315,19 @@ export default {
       if (this.isPodcast) return this.podcastItems
       return this.bookItems
     },
+    selectedTokens() {
+      if (!this.selected || this.selected === 'all') return []
+      return this.selected
+        .split(',')
+        .map((token) => token.trim())
+        .filter(Boolean)
+    },
+    isComposableSublist() {
+      return !this.isSeries && !this.isPodcast && ['genres', 'tags', 'series', 'authors', 'narrators', 'publishers', 'publishedDecades', 'languages'].includes(this.sublist)
+    },
     selectedItemSublist() {
-      return this.selected?.includes('.') ? this.selected.split('.')[0] : null
+      const firstFilter = this.selectedTokens[0]?.replace(/^!/, '')
+      return firstFilter?.includes('.') ? firstFilter.split('.')[0] : null
     },
     selectedSublistText() {
       if (!this.sublist) {
@@ -322,47 +337,9 @@ export default {
       return sublistItem?.textPlural || sublistItem?.text || ''
     },
     selectedText() {
-      if (!this.selected) return ''
-      const parts = this.selected.split('.')
-      const filterName = this.selectItems.find((i) => i.value === parts[0])
-      let filterValue = null
-      if (parts.length > 1) {
-        const decoded = this.$decode(parts[1])
-        if (parts[0] === 'authors') {
-          const author = this.authors.find((au) => au.id == decoded)
-          if (author) filterValue = author.name
-        } else if (parts[0] === 'series') {
-          if (decoded === 'no-series') {
-            filterValue = this.$strings.MessageNoSeries
-          } else {
-            const series = this.series.find((se) => se.id == decoded)
-            if (series) filterValue = series.name
-          }
-        } else if (parts[0] === 'progress') {
-          const item = this.progress.find((p) => p.id == decoded)
-          if (item) filterValue = item.name
-        } else if (parts[0] === 'tracks') {
-          const item = this.tracks.find((t) => t.id == decoded)
-          if (item) filterValue = item.name
-        } else if (parts[0] === 'ebooks') {
-          const item = this.ebooks.find((e) => e.id == decoded)
-          if (item) filterValue = item.name
-        } else if (parts[0] === 'missing') {
-          const item = this.missing.find((m) => m.id == decoded)
-          if (item) filterValue = item.name
-        } else {
-          filterValue = decoded
-        }
-      }
-      if (filterName && filterValue) {
-        return `${filterName.text}: ${filterValue}`
-      } else if (filterName) {
-        return filterName.text
-      } else if (filterValue) {
-        return filterValue
-      } else {
-        return ''
-      }
+      if (!this.selectedTokens.length) return ''
+      if (this.selectedTokens.length > 2) return `${this.selectedTokens.length} filters`
+      return this.selectedTokens.map((token) => this.formatFilterToken(token)).join(', ')
     },
     genres() {
       return this.filterData.genres || []
@@ -531,6 +508,37 @@ export default {
     }
   },
   methods: {
+    getFilterMode(filter) {
+      if (this.selectedTokens.includes(filter)) return 'include'
+      if (this.selectedTokens.includes(`!${filter}`)) return 'exclude'
+      return null
+    },
+    isSelected(filter) {
+      return this.selectedTokens.includes(filter)
+    },
+    formatFilterToken(token) {
+      const exclude = token.startsWith('!')
+      const filter = exclude ? token.slice(1) : token
+      const parts = filter.split('.')
+      const filterName = this.selectItems.find((item) => item.value === parts[0])
+      let filterValue = null
+
+      if (parts.length > 1) {
+        const decoded = this.$decode(parts[1])
+        if (parts[0] === 'authors') {
+          filterValue = this.authors.find((author) => author.id == decoded)?.name
+        } else if (parts[0] === 'series') {
+          filterValue = decoded === 'no-series' ? this.$strings.MessageNoSeries : this.series.find((series) => series.id == decoded)?.name
+        } else if (['progress', 'tracks', 'ebooks', 'missing'].includes(parts[0])) {
+          filterValue = this[parts[0]].find((item) => item.id == decoded)?.name
+        } else {
+          filterValue = decoded
+        }
+      }
+
+      const label = filterName && filterValue ? `${filterName.text}: ${filterValue}` : filterName?.text || filterValue || ''
+      return exclude ? `− ${label}` : `+ ${label}`
+    },
     clearSelected() {
       this.selected = 'all'
       this.showMenu = false
@@ -540,8 +548,22 @@ export default {
       if (!this.selectedItemSublist) this.sublist = null
       this.showMenu = false
     },
-    clickedSublistOption(item) {
-      this.clickedOption({ value: `${this.sublist}.${item}` })
+    setSublistFilter(item, mode) {
+      const filter = `${this.sublist}.${item}`
+      if (!this.isComposableSublist) {
+        this.clickedOption({ value: filter })
+        return
+      }
+
+      const currentMode = this.getFilterMode(filter)
+      const selectedTokens = this.selectedTokens.filter((token) => token !== filter && token !== `!${filter}`)
+      if (currentMode !== mode) {
+        selectedTokens.push(mode === 'exclude' ? `!${filter}` : filter)
+      }
+
+      const val = selectedTokens.join(',') || 'all'
+      this.selected = val
+      this.$nextTick(() => this.$emit('change', val))
     },
     clickedOption(option) {
       if (option.sublist) {
@@ -550,7 +572,11 @@ export default {
       }
 
       const val = option.value
-      if (this.selected === val) {
+      if (val === 'all') {
+        this.clearSelected()
+        return
+      }
+      if (this.selectedTokens.length === 1 && this.selectedTokens[0] === val) {
         this.showMenu = false
         return
       }

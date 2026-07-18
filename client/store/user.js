@@ -96,8 +96,10 @@ export const actions = {
         settingsUpdate.orderBy = 'media.metadata.title'
       }
       const invalidFilters = ['series', 'authors', 'narrators', 'publishers', 'publishedDecades', 'languages', 'progress', 'issues', 'ebooks', 'abridged']
-      const filterByFirstPart = (state.settings.filterBy || '').split('.').shift()
-      if (invalidFilters.includes(filterByFirstPart)) {
+      const filterGroups = (state.settings.filterBy || '')
+        .split(',')
+        .map((filter) => filter.replace(/^!/, '').split('.').shift())
+      if (filterGroups.some((filterGroup) => invalidFilters.includes(filterGroup))) {
         settingsUpdate.filterBy = 'all'
       }
     } else {

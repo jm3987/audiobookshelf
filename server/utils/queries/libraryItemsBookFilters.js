@@ -245,6 +245,105 @@ module.exports = {
   },
 
   /**
+   * Build AND conditions for composable filters. Included values in the same
+   * group are ORed; excluded values must not match.
+   * @param {{ group:string, value:string, exclude:boolean }[]} filters
+   * @returns {{ bookWhere:Sequelize.WhereOptions[], replacements:object }}
+   */
+  getComposableFilterQuery(filters) {
+    const bookWhere = []
+    const replacements = {}
+    const groupedFilters = filters.reduce((groups, filter) => {
+      if (!groups[filter.group]) groups[filter.group] = { include: [], exclude: [] }
+      groups[filter.group][filter.exclude ? 'exclude' : 'include'].push(filter.value)
+      return groups
+    }, {})
+
+    const addCondition = (sql) => bookWhere.push(Sequelize.literal(sql))
+    const addValues = (group, mode, values) => {
+      const key = `multiFilter_${group}_${mode}`
+      replacements[key] = values
+      return `:${key}`
+    }
+
+    for (const [group, values] of Object.entries(groupedFilters)) {
+      if (['genres', 'tags', 'narrators'].includes(group)) {
+        if (values.include.length) {
+          const replacementsKey = addValues(group, 'include', values.include)
+          addCondition(`EXISTS (SELECT 1 FROM json_each(book.${group}) WHERE json_valid(book.${group}) AND json_each.value IN (${replacementsKey}))`)
+        }
+        if (values.exclude.length) {
+          const replacementsKey = addValues(group, 'exclude', values.exclude)
+          addCondition(`NOT EXISTS (SELECT 1 FROM json_each(book.${group}) WHERE json_valid(book.${group}) AND json_each.value IN (${replacementsKey}))`)
+        }
+      } else if (group === 'publishers' || group === 'languages') {
+        const column = group === 'publishers' ? 'publisher' : 'language'
+        if (values.include.length) {
+          const replacementsKey = addValues(group, 'include', values.include)
+          addCondition(`book.${column} IN (${replacementsKey})`)
+        }
+        if (values.exclude.length) {
+          const replacementsKey = addValues(group, 'exclude', values.exclude)
+          addCondition(`(book.${column} IS NULL OR book.${column} NOT IN (${replacementsKey}))`)
+        }
+      } else if (group === 'authors') {
+        if (values.include.length) {
+          const replacementsKey = addValues(group, 'include', values.include)
+          addCondition(`EXISTS (SELECT 1 FROM bookAuthors WHERE bookAuthors.bookId = book.id AND bookAuthors.authorId IN (${replacementsKey}))`)
+        }
+        if (values.exclude.length) {
+          const replacementsKey = addValues(group, 'exclude', values.exclude)
+          addCondition(`NOT EXISTS (SELECT 1 FROM bookAuthors WHERE bookAuthors.bookId = book.id AND bookAuthors.authorId IN (${replacementsKey}))`)
+        }
+      } else if (group === 'series') {
+        const includeNoSeries = values.include.includes('no-series')
+        const excludeNoSeries = values.exclude.includes('no-series')
+        const includedSeries = values.include.filter((value) => value !== 'no-series')
+        const excludedSeries = values.exclude.filter((value) => value !== 'no-series')
+
+        if (includedSeries.length) {
+          const replacementsKey = addValues(group, 'include', includedSeries)
+          const matchesSeries = `EXISTS (SELECT 1 FROM bookSeries WHERE bookSeries.bookId = book.id AND bookSeries.seriesId IN (${replacementsKey}))`
+          addCondition(includeNoSeries ? `(NOT EXISTS (SELECT 1 FROM bookSeries WHERE bookSeries.bookId = book.id) OR ${matchesSeries})` : matchesSeries)
+        } else if (includeNoSeries) {
+          addCondition('NOT EXISTS (SELECT 1 FROM bookSeries WHERE bookSeries.bookId = book.id)')
+        }
+
+        if (excludedSeries.length) {
+          const replacementsKey = addValues(group, 'exclude', excludedSeries)
+          addCondition(`NOT EXISTS (SELECT 1 FROM bookSeries WHERE bookSeries.bookId = book.id AND bookSeries.seriesId IN (${replacementsKey}))`)
+        }
+        if (excludeNoSeries) {
+          addCondition('EXISTS (SELECT 1 FROM bookSeries WHERE bookSeries.bookId = book.id)')
+        }
+      } else if (group === 'publishedDecades') {
+        if (values.include.length) {
+          const ranges = values.include.map((value, index) => {
+            const startKey = `multiFilter_${group}_include_${index}_start`
+            const endKey = `multiFilter_${group}_include_${index}_end`
+            replacements[startKey] = parseInt(value, 10)
+            replacements[endKey] = parseInt(value, 10) + 9
+            return `CAST(book.publishedYear AS INTEGER) BETWEEN :${startKey} AND :${endKey}`
+          })
+          addCondition(`(${ranges.join(' OR ')})`)
+        }
+        if (values.exclude.length) {
+          const ranges = values.exclude.map((value, index) => {
+            const startKey = `multiFilter_${group}_exclude_${index}_start`
+            const endKey = `multiFilter_${group}_exclude_${index}_end`
+            replacements[startKey] = parseInt(value, 10)
+            replacements[endKey] = parseInt(value, 10) + 9
+            return `CAST(book.publishedYear AS INTEGER) BETWEEN :${startKey} AND :${endKey}`
+          })
+          addCondition(`NOT (${ranges.join(' OR ')})`)
+        }
+      }
+    }
+
+    return { bookWhere, replacements }
+  },
+
+  /**
    * Get sequelize order
    * @param {string} sortBy
    * @param {boolean} sortDesc
@@ -393,9 +492,10 @@ module.exports = {
    * @param {number} limit
    * @param {number} offset
    * @param {boolean} isHomePage for home page shelves
+   * @param {{ group:string, value:string, exclude:boolean }[]} filters composable filters
    * @returns {{ libraryItems: import('../../models/LibraryItem')[], count: number }}
    */
-  async getFilteredLibraryItems(libraryId, user, filterGroup, filterValue, sortBy, sortDesc, collapseseries, include, limit, offset, isHomePage = false) {
+  async getFilteredLibraryItems(libraryId, user, filterGroup, filterValue, sortBy, sortDesc, collapseseries, include, limit, offset, isHomePage = false, filters = []) {
     // TODO: Handle collapse sub-series
     if (filterGroup === 'series' && collapseseries) {
       collapseseries = false
@@ -548,6 +648,12 @@ module.exports = {
     let { mediaWhere, replacements } = this.getMediaGroupQuery(filterGroup, filterValue)
     let bookWhere = Array.isArray(mediaWhere) ? mediaWhere : [mediaWhere]
 
+    if (filters.length) {
+      const composableFilterQuery = this.getComposableFilterQuery(filters)
+      bookWhere.push(...composableFilterQuery.bookWhere)
+      replacements = { ...replacements, ...composableFilterQuery.replacements }
+    }
+
     // User permissions
     const userPermissionBookWhere = this.getUserPermissionBookWhereQuery(user)
     replacements = { ...replacements, ...userPermissionBookWhere.replacements }
@@ -622,7 +728,7 @@ module.exports = {
     }
 
     const findAndCountAll = process.env.QUERY_PROFILING ? profile(this.findAndCountAll) : this.findAndCountAll
-    const { rows: books, count } = await findAndCountAll(findOptions, limit, offset, !filterGroup && !userPermissionBookWhere.bookWhere.length)
+    const { rows: books, count } = await findAndCountAll(findOptions, limit, offset, !filterGroup && !filters.length && !userPermissionBookWhere.bookWhere.length)
 
     const libraryItems = books.map((bookExpanded) => {
       const libraryItem = bookExpanded.libraryItem

@@ -624,7 +624,8 @@ class LibraryController {
     payload.offset = payload.page * payload.limit
 
     // TODO: Temporary way of handling collapse sub-series. Either remove feature or handle through sql queries
-    const filterByGroup = payload.filterBy?.split('.').shift()
+    const isSingleFilter = payload.filterBy && !payload.filterBy.includes(',') && !payload.filterBy.startsWith('!')
+    const filterByGroup = isSingleFilter ? payload.filterBy.split('.').shift() : null
     const filterByValue = filterByGroup ? libraryFilters.decode(payload.filterBy.replace(`${filterByGroup}.`, '')) : null
     if (filterByGroup === 'series' && filterByValue !== 'no-series' && payload.collapseseries) {
       const seriesId = libraryFilters.decode(payload.filterBy.split('.')[1])

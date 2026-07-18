@@ -26,15 +26,37 @@ module.exports = {
 
     let filterValue = null
     let filterGroup = null
+    let filters = []
     if (filterBy) {
       const searchGroups = ['genres', 'tags', 'series', 'authors', 'progress', 'narrators', 'publishers', 'publishedDecades', 'missing', 'languages', 'tracks', 'ebooks']
-      const group = searchGroups.find((_group) => filterBy.startsWith(_group + '.'))
-      filterGroup = group || filterBy
-      filterValue = group ? this.decode(filterBy.replace(`${group}.`, '')) : null
+      const composableGroups = ['genres', 'tags', 'series', 'authors', 'narrators', 'publishers', 'publishedDecades', 'languages']
+      const filterTokens = String(filterBy)
+        .split(',')
+        .map((token) => token.trim())
+        .filter(Boolean)
+
+      filters = filterTokens.map((token) => {
+        const exclude = token.startsWith('!')
+        const filter = exclude ? token.slice(1) : token
+        const group = searchGroups.find((_group) => filter.startsWith(_group + '.'))
+        return {
+          group: group || filter,
+          value: group ? this.decode(filter.replace(`${group}.`, '')) : null,
+          exclude
+        }
+      })
+
+      const canCompose = (filters.length > 1 || filters[0]?.exclude) && filters.every((filter) => composableGroups.includes(filter.group))
+      if (!canCompose) {
+        const filter = filters[0]
+        filterGroup = filter?.group || null
+        filterValue = filter?.value || null
+        filters = []
+      }
     }
 
     if (mediaType === 'book') {
-      return libraryItemsBookFilters.getFilteredLibraryItems(libraryId, user, filterGroup, filterValue, sortBy, sortDesc, collapseseries, include, limit, offset)
+      return libraryItemsBookFilters.getFilteredLibraryItems(libraryId, user, filterGroup, filterValue, sortBy, sortDesc, collapseseries, include, limit, offset, false, filters)
     } else {
       return libraryItemsPodcastFilters.getFilteredLibraryItems(libraryId, user, filterGroup, filterValue, sortBy, sortDesc, include, limit, offset)
     }
